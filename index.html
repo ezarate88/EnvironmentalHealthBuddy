@@ -7,7 +7,7 @@
 
   <link rel="preconnect" href="https://unpkg.com" />
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
-        integrity="sha256-p4NxAoJBhIINfQULjqe5u5gCk4eP6rN9JmHWaZ98Zxk=" crossorigin="" />
+        integrity="sha256-p4NxAoJBhIINfQULJqe5u5gCk4eP6rN9JmHWaZ98Zxk=" crossorigin="" />
 
   <style>
     :root{
@@ -60,7 +60,7 @@
       position:relative;
       height:100dvh;
       display:grid;
-      grid-template-rows:auto 1fr;
+      grid-template-rows:auto minmax(0, 1fr);
       padding:14px;
       gap:12px;
     }
@@ -90,7 +90,7 @@
     .shell{
       min-height:0;
       display:grid;
-      grid-template-columns:1.15fr .85fr;
+      grid-template-columns:minmax(0,1.15fr) minmax(360px,.85fr);
       gap:12px;
     }
 
@@ -102,9 +102,16 @@
       backdrop-filter:blur(18px);
       overflow:hidden;
       min-width:0;
+      min-height:0;
     }
 
-    .mapPanel{position:relative;display:grid;grid-template-rows:auto 1fr}
+    .mapPanel{
+      position:relative;
+      display:grid;
+      grid-template-rows:auto minmax(0, 1fr);
+      min-height:0;
+    }
+
     .tools{
       padding:12px;
       display:grid;
@@ -114,9 +121,15 @@
       z-index:2;
     }
 
-    .searchRow{display:flex;gap:8px}
+    .searchRow{
+      display:grid;
+      grid-template-columns:minmax(0,1fr) auto;
+      gap:8px;
+    }
+
     .searchRow input{
       width:100%;
+      min-width:0;
       border:1px solid rgba(15,23,42,.18);
       border-radius:16px;
       padding:12px 14px;
@@ -149,13 +162,27 @@
       color:#334155;
     }
 
-    #map{height:100%;min-height:360px;z-index:1}
+    #map{
+      width:100%;
+      height:100%;
+      min-height:420px;
+      z-index:1;
+      background:#dbeafe;
+    }
+
+    /* Important Leaflet fix: prevents global CSS or browser preview CSS from distorting tiles. */
+    .leaflet-container img,
+    .leaflet-container .leaflet-tile{
+      max-width:none !important;
+      max-height:none !important;
+    }
+
     .leaflet-container{font-family:inherit}
     .leaflet-control-attribution{font-size:10px}
 
     .sidePanel{
       display:grid;
-      grid-template-rows:auto auto 1fr;
+      grid-template-rows:auto auto minmax(0, 1fr);
       min-height:0;
     }
 
@@ -264,7 +291,7 @@
       border:1px solid rgba(255,255,255,.58);
       z-index:900;
       display:none;
-      grid-template-rows:auto 1fr;
+      grid-template-rows:auto minmax(0, 1fr);
     }
     .chatDrawer.open{display:grid}
     .chatTop{
@@ -301,6 +328,7 @@
       .shell{grid-template-columns:1fr;grid-template-rows:62dvh auto}
       .sidePanel{min-height:620px}
       .brand p{white-space:normal}
+      #map{min-height:360px}
       .chatDrawer{
         position:fixed;
         inset:72px 12px 12px 12px;
@@ -311,6 +339,16 @@
         right:16px;
         bottom:calc(16px + env(safe-area-inset-bottom));
       }
+    }
+
+    @media (max-width: 520px){
+      .app{padding:10px}
+      header{align-items:flex-start}
+      .brand h1{font-size:1rem}
+      .logo{width:40px;height:40px}
+      .searchRow{grid-template-columns:1fr}
+      .btn{width:100%}
+      #locateBtn{width:auto;padding:10px 12px}
     }
 
     @media (prefers-reduced-motion:no-preference){
@@ -396,7 +434,8 @@
 
   <script>
     const PIMA_BOUNDARY_URL = "https://gisdata.pima.gov/arcgis1/rest/services/GISOpenData/Boundaries/MapServer/11/query";
-    const CHATBOT_URL = "https://agent.jotform.com/019ea8f98017768b92474c624b34d639b3aa";
+    const PIMA_CENTER = [32.2226, -110.9747];
+    const PIMA_BOUNDS = [[31.95, -111.65], [32.55, -110.45]];
 
     const CONTACTS = {
       pimaCounty: {
@@ -451,7 +490,11 @@
     let selected = null;
     let boundaryFeatures = [];
 
-    const map = L.map("map", { zoomControl: true }).setView([32.2226, -110.9747], 10);
+    const map = L.map("map", {
+      zoomControl: true,
+      preferCanvas: true,
+      maxBoundsViscosity: 0.25
+    }).setView(PIMA_CENTER, 11);
 
     L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
       maxZoom: 19,
@@ -475,6 +518,20 @@
     };
 
     const $ = (id) => document.getElementById(id);
+
+    function safeInvalidate(){
+      requestAnimationFrame(() => {
+        map.invalidateSize(false);
+        setTimeout(() => map.invalidateSize(false), 150);
+      });
+    }
+
+    window.addEventListener("load", safeInvalidate);
+    window.addEventListener("resize", safeInvalidate);
+
+    if ("ResizeObserver" in window) {
+      new ResizeObserver(safeInvalidate).observe($("map"));
+    }
 
     function setStatus(message){
       $("results").innerHTML = `<div class="status">${escapeHtml(message)}</div>`;
@@ -593,12 +650,13 @@
       selected = { lat, lng, boundaryName: "Checking boundary..." };
 
       if (marker) marker.setLatLng([lat,lng]);
-      else marker = L.marker([lat,lng], { draggable: true }).addTo(map);
-
-      marker.on("dragend", (e) => {
-        const pos = e.target.getLatLng();
-        selectLocation(pos.lat, pos.lng);
-      });
+      else {
+        marker = L.marker([lat,lng], { draggable: true }).addTo(map);
+        marker.on("dragend", (e) => {
+          const pos = e.target.getLatLng();
+          selectLocation(pos.lat, pos.lng);
+        });
+      }
 
       const match = findBoundary(lat, lng);
       selected.boundaryName = match ? getDisplayName(match.properties) : "No matching published boundary found";
@@ -610,10 +668,24 @@
       }
 
       renderResults();
+      safeInvalidate();
     }
 
     async function loadBoundaries(){
-      const url = `${PIMA_BOUNDARY_URL}?outFields=*&where=1%3D1&f=geojson`;
+      /*
+        Critical fix:
+        outSR=4326 forces ArcGIS geometry to latitude/longitude.
+        Without this, some services can return projected coordinates that Leaflet cannot display correctly.
+      */
+      const params = new URLSearchParams({
+        outFields: "*",
+        where: "1=1",
+        returnGeometry: "true",
+        outSR: "4326",
+        f: "geojson"
+      });
+
+      const url = `${PIMA_BOUNDARY_URL}?${params.toString()}`;
       try {
         const res = await fetch(url);
         if (!res.ok) throw new Error(`GIS service returned ${res.status}`);
@@ -629,9 +701,21 @@
           }
         }).addTo(map);
 
-        try { map.fitBounds(boundaryLayer.getBounds(), { padding: [18,18] }); } catch(e) {}
+        if (boundaryFeatures.length) {
+          try {
+            map.fitBounds(boundaryLayer.getBounds(), { padding: [24,24], maxZoom: 12 });
+          } catch(e) {
+            map.fitBounds(PIMA_BOUNDS, { padding: [24,24] });
+          }
+        } else {
+          map.fitBounds(PIMA_BOUNDS, { padding: [24,24] });
+        }
+
+        safeInvalidate();
       } catch (err) {
         console.warn(err);
+        map.fitBounds(PIMA_BOUNDS, { padding: [24,24] });
+        safeInvalidate();
         setStatus("Boundary layer could not be loaded. You can still pick a location, but jurisdiction matching may be unavailable until the GIS service is reachable.");
       }
     }
@@ -656,6 +740,7 @@
       } finally {
         $("searchBtn").disabled = false;
         $("searchBtn").textContent = "Search";
+        safeInvalidate();
       }
     }
 
@@ -723,7 +808,11 @@
     $("closeChatBtn").addEventListener("click", () => toggleChat(false));
     document.addEventListener("keydown", e => { if (e.key === "Escape") toggleChat(false); });
 
-    loadBoundaries();
+    // Give CSS grid one tick to settle before Leaflet calculates tile positions.
+    setTimeout(() => {
+      safeInvalidate();
+      loadBoundaries();
+    }, 100);
   </script>
 </body>
 </html>
